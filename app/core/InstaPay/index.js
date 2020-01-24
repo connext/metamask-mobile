@@ -7,7 +7,6 @@ import { fromExtendedKey, fromMnemonic } from 'ethers/utils/hdnode';
 // eslint-disable-next-line import/no-nodejs-modules
 import { EventEmitter } from 'events';
 import { Currency, minBN, toBN, tokenToWei, weiToToken, delay, inverse } from './utils';
-import Store from './utils/store';
 import AppConstants from '../AppConstants';
 import { Contract, ethers as eth } from 'ethers';
 import { AddressZero, Zero } from 'ethers/constants';
@@ -34,13 +33,6 @@ const MIGRATION_TIMEOUT_MINUTES = 4;
 // profile on initial load in the case the
 // user is being paid without depositing, or
 // in the case where the user is redeeming a link
-
-// NOTE: in the redeem controller, if the default payment is
-// insufficient, then it will be updated. the same thing
-// happens in autodeposit, if the eth deposited > deposit
-// needed for autoswap
-const DEFAULT_COLLATERAL_MINIMUM = Currency.DAI('10');
-const DEFAULT_AMOUNT_TO_COLLATERALIZE = Currency.DAI('20');
 
 const hub = new EventEmitter();
 let client = null;
@@ -118,7 +110,6 @@ class InstaPay {
 		const subdomain = network !== 'mainnet' ? `${network}.` : '';
 		const ethProviderUrl = `https://${subdomain}${API_URL}/ethprovider`;
 		const ethProvider = new eth.providers.JsonRpcProvider(ethProviderUrl);
-		const store = await Store.init();
 		const { KeyringController } = Engine.context;
 		const data = await KeyringController.exportSeedPhrase(pwd);
 		const mnemonic = JSON.stringify(data).replace(/"/g, '');
@@ -137,7 +128,6 @@ class InstaPay {
 			xpub,
 			nodeUrl: `wss://${subdomain}indra.connext.network/api/messaging`,
 			ethProviderUrl,
-			store,
 			logLevel: 5
 		};
 
@@ -148,18 +138,6 @@ class InstaPay {
 		Logger.log(`xpub address: ${eth.utils.computeAddress(fromExtendedKey(xpub).publicKey)}`);
 
 		Logger.log('InstaPay :: connect complete ');
-
-		// Wait for channel to be available
-		const channelIsAvailable = async channel => {
-			const chan = await channel.getChannel();
-			return chan && chan.available;
-		};
-
-		while (!(await channelIsAvailable(channel))) {
-			await new Promise(res => setTimeout(() => res(), 1000));
-		}
-
-		Logger.log('PC:Channel is available!');
 
 		TransactionsNotificationManager.setInstaPayWalletAddress(wallet.address);
 
@@ -452,25 +430,6 @@ class InstaPay {
 		}
 	};
 
-	addDefaultPaymentProfile = async () => {
-		// add the payment profile for tokens only
-		// then request collateral of this type
-		const { token, channel } = this.state;
-
-		if (!token) {
-			Logger.log('No token found, not setting default token payment profile');
-			return;
-		}
-		const tokenProfile = await channel.addPaymentProfile({
-			amountToCollateralize: DEFAULT_AMOUNT_TO_COLLATERALIZE.wad.toString(),
-			minimumMaintainedCollateral: DEFAULT_COLLATERAL_MINIMUM.wad.toString(),
-			assetId: token.address
-		});
-		this.setState({ tokenProfile });
-		Logger.log(`Got a default token profile: ${JSON.stringify(this.state.tokenProfile)}`);
-		return tokenProfile;
-	};
-
 	refreshBalances = async () => {
 		const { channel, swapRate } = this.state;
 		const { maxDeposit, minDeposit } = await this.getDepositLimits();
@@ -648,13 +607,6 @@ class InstaPay {
 
 		if (collateralNeeded.gt(parseEther(collateral))) {
 			Logger.log(`Requesting more collateral...`);
-			const tokenProfile = await channel.addPaymentProfile({
-				amountToCollateralize: collateralNeeded.add(parseEther('10')), // add a buffer of $10 so you dont collateralize on every payment
-				minimumMaintainedCollateral: collateralNeeded,
-				assetId: token.address
-			});
-			Logger.log(`Got a new token profile: ${JSON.stringify(tokenProfile)}`);
-			this.setState({ tokenProfile });
 			await channel.requestCollateral(token.address);
 			collateral = formatEther((await channel.getFreeBalance(token.address))[hubFBAddress]);
 			Logger.log(`Collateral: ${collateral} tokens, need: ${formatEther(collateralNeeded)}`);
@@ -785,11 +737,6 @@ class InstaPay {
 			Logger.log(`Withdrawing ${total.toETH().format()} to: ${selectedAddress}`);
 
 			if (balance.channel.token.wad.gt(Zero)) {
-				await channel.addPaymentProfile({
-					amountToCollateralize: total.toETH().wad.toString(),
-					minimumMaintainedCollateral: total.toETH().wad.toString(),
-					assetId: AddressZero
-				});
 				await channel.requestCollateral(AddressZero);
 				await channel.swap({
 					amount: balance.channel.token.wad.toString(),
@@ -1046,7 +993,6 @@ instance = {
 		await AsyncStorage.removeItem('@MetaMask:InstaPay');
 		await AsyncStorage.removeItem('@MetaMask:lastKnownInstantPaymentID');
 		await AsyncStorage.removeItem('@MetaMask:InstaPayVersion');
-		Store.reset();
 		instance.stop();
 	},
 	reloadClient,
