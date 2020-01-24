@@ -170,3 +170,6 @@ sed -i'' -e 's/android.support/androidx/' $TARGET;
 
 TARGET="node_modules/react-native-tcp/android/src/main/java/com/peel/react/TcpSockets.java"
 sed -i'' -e 's/android.support/androidx/' $TARGET;
+
+echo "18. Init Git Submodules"
+git submodule update --init 
