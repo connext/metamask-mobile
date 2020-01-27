@@ -191,13 +191,6 @@ class InstaPay {
 			username: null
 		});
 
-		try {
-			await this.addDefaultPaymentProfile();
-		} catch (e) {
-			Logger.error('InstaPay :: Error adding default payment profile...', e);
-		}
-
-		// await channel.restoreState();
 		await this.startPoller();
 	};
 
